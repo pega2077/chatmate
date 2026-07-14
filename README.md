@@ -1,5 +1,3 @@
-这是一份专为 **Programming Agent**（如 Cursor、Cline 或自定义开源 Agent 研发管线）定制的开发方案。为了让 Agent 能够毫无歧义地执行，方案放弃了模糊的业务描述，完全采用**声明式架构、数据结构定义（Dart Schema）以及明确的文件树拓扑**。
-
 ---
 
 # Flutter MVP 开发方案：智能聊天回复助手
