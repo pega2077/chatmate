@@ -22,7 +22,7 @@ class HomeScreen extends ConsumerWidget {
         title: const Text('ChatMate · 人设管理'),
         actions: [
           IconButton(
-            tooltip: hasKey ? 'API 设置' : '配置 API（当前为演示模式）',
+            tooltip: hasKey ? '设置' : '配置 API（当前为演示模式）',
             onPressed: () {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(

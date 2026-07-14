@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../data/models/api_config.dart';
+import '../../data/models/ocr_config.dart';
 import '../../providers/api_config_provider.dart';
+import '../../providers/ocr_config_provider.dart';
 
 class ApiSettingsScreen extends ConsumerStatefulWidget {
   const ApiSettingsScreen({super.key});
@@ -20,7 +22,13 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
   late final TextEditingController _connectTimeoutCtrl;
   late final TextEditingController _receiveTimeoutCtrl;
 
+  late final TextEditingController _akIdCtrl;
+  late final TextEditingController _akSecretCtrl;
+  late final TextEditingController _ocrEndpointCtrl;
+
+  late OcrProvider _ocrProvider;
   bool _obscureKey = true;
+  bool _obscureAkSecret = true;
   bool _testing = false;
   String? _testMessage;
   bool _testOk = false;
@@ -38,6 +46,12 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
     _receiveTimeoutCtrl = TextEditingController(
       text: '${config.receiveTimeoutSeconds}',
     );
+
+    final ocr = ref.read(ocrConfigProvider);
+    _ocrProvider = ocr.provider;
+    _akIdCtrl = TextEditingController(text: ocr.accessKeyId);
+    _akSecretCtrl = TextEditingController(text: ocr.accessKeySecret);
+    _ocrEndpointCtrl = TextEditingController(text: ocr.endpoint);
   }
 
   @override
@@ -47,10 +61,13 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
     _modelCtrl.dispose();
     _connectTimeoutCtrl.dispose();
     _receiveTimeoutCtrl.dispose();
+    _akIdCtrl.dispose();
+    _akSecretCtrl.dispose();
+    _ocrEndpointCtrl.dispose();
     super.dispose();
   }
 
-  ApiConfig _buildFromFields() {
+  ApiConfig _buildApiFromFields() {
     return ApiConfig(
       baseUrl: _baseUrlCtrl.text.trim(),
       apiKey: _apiKeyCtrl.text.trim(),
@@ -62,19 +79,40 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
     );
   }
 
+  OcrConfig _buildOcrFromFields() {
+    return OcrConfig(
+      provider: _ocrProvider,
+      accessKeyId: _akIdCtrl.text.trim(),
+      accessKeySecret: _akSecretCtrl.text.trim(),
+      endpoint: _ocrEndpointCtrl.text.trim().isEmpty
+          ? AppConstants.defaultAliyunOcrEndpoint
+          : _ocrEndpointCtrl.text.trim(),
+    );
+  }
+
   Future<void> _save() async {
-    final config = _buildFromFields();
+    final config = _buildApiFromFields();
     if (config.baseUrl.isEmpty || config.model.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Base URL 与模型名称不能为空')),
       );
       return;
     }
+
+    final ocr = _buildOcrFromFields();
+    if (ocr.provider == OcrProvider.aliyun && !ocr.hasAliyunCredentials) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('使用阿里云 OCR 时请填写 AccessKey ID 与 Secret')),
+      );
+      return;
+    }
+
     await ref.read(apiConfigProvider.notifier).save(config);
+    await ref.read(ocrConfigProvider.notifier).save(ocr);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('API 配置已保存'),
+        content: Text('设置已保存'),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -82,13 +120,19 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
 
   Future<void> _reset() async {
     await ref.read(apiConfigProvider.notifier).reset();
+    await ref.read(ocrConfigProvider.notifier).reset();
     final config = ref.read(apiConfigProvider);
+    final ocr = ref.read(ocrConfigProvider);
     setState(() {
       _baseUrlCtrl.text = config.baseUrl;
       _apiKeyCtrl.text = config.apiKey;
       _modelCtrl.text = config.model;
       _connectTimeoutCtrl.text = '${config.connectTimeoutSeconds}';
       _receiveTimeoutCtrl.text = '${config.receiveTimeoutSeconds}';
+      _ocrProvider = ocr.provider;
+      _akIdCtrl.text = ocr.accessKeyId;
+      _akSecretCtrl.text = ocr.accessKeySecret;
+      _ocrEndpointCtrl.text = ocr.endpoint;
       _testMessage = null;
     });
     if (!mounted) return;
@@ -101,7 +145,7 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
   }
 
   Future<void> _testConnection() async {
-    final config = _buildFromFields();
+    final config = _buildApiFromFields();
     if (config.baseUrl.isEmpty) {
       setState(() {
         _testOk = false;
@@ -128,7 +172,6 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
     );
 
     try {
-      // OpenAI 兼容接口：优先打 /models，失败再试轻量 chat
       try {
         await dio.get('/models');
       } on DioException catch (_) {
@@ -180,7 +223,7 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('API 设置'),
+        title: const Text('设置'),
         actions: [
           TextButton(onPressed: _reset, child: const Text('重置')),
           FilledButton(
@@ -193,6 +236,8 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
         children: [
+          Text('大模型 API', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 12),
           Text('服务商预设', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           Wrap(
@@ -229,7 +274,9 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
                 tooltip: _obscureKey ? '显示' : '隐藏',
                 onPressed: () => setState(() => _obscureKey = !_obscureKey),
                 icon: Icon(
-                  _obscureKey ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                  _obscureKey
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
                 ),
               ),
             ),
@@ -290,6 +337,79 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
               ),
             ),
           ],
+          const SizedBox(height: 32),
+          const Divider(),
+          const SizedBox(height: 16),
+          Text('OCR 服务', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Text(
+            '用于「导入截图识别」。本地 OCR 免配置；阿里云 OCR 使用全文识别高精版（RecognizeAdvanced），'
+            '需开通文字识别并填写 AccessKey。浏览器端可能因跨域无法调用，建议在 App / 桌面端使用。',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 16),
+          SegmentedButton<OcrProvider>(
+            segments: [
+              for (final p in OcrProvider.values)
+                ButtonSegment(
+                  value: p,
+                  label: Text(p.label),
+                  icon: Icon(
+                    p == OcrProvider.local
+                        ? Icons.phone_android_outlined
+                        : Icons.cloud_outlined,
+                  ),
+                ),
+            ],
+            selected: {_ocrProvider},
+            onSelectionChanged: (set) {
+              setState(() => _ocrProvider = set.first);
+            },
+          ),
+          if (_ocrProvider == OcrProvider.aliyun) ...[
+            const SizedBox(height: 20),
+            TextField(
+              controller: _akIdCtrl,
+              decoration: const InputDecoration(
+                labelText: 'AccessKey ID',
+                hintText: 'LTAI...',
+              ),
+              autocorrect: false,
+              enableSuggestions: false,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _akSecretCtrl,
+              obscureText: _obscureAkSecret,
+              decoration: InputDecoration(
+                labelText: 'AccessKey Secret',
+                suffixIcon: IconButton(
+                  tooltip: _obscureAkSecret ? '显示' : '隐藏',
+                  onPressed: () =>
+                      setState(() => _obscureAkSecret = !_obscureAkSecret),
+                  icon: Icon(
+                    _obscureAkSecret
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                  ),
+                ),
+              ),
+              autocorrect: false,
+              enableSuggestions: false,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _ocrEndpointCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Endpoint',
+                hintText: AppConstants.defaultAliyunOcrEndpoint,
+                helperText: '默认杭州公网：ocr-api.cn-hangzhou.aliyuncs.com',
+              ),
+              autocorrect: false,
+            ),
+          ],
           const SizedBox(height: 24),
           Text(
             '说明',
@@ -297,7 +417,8 @@ class _ApiSettingsScreenState extends ConsumerState<ApiSettingsScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            '配置保存在本地 SharedPreferences。未填写 API Key 时，生成回复会使用内置演示数据。也可通过编译期 --dart-define 注入初始默认值。',
+            '配置保存在本地 SharedPreferences。未填写 LLM API Key 时，生成回复会使用内置演示数据。'
+            '也可通过编译期 --dart-define 注入初始默认值（含 ALIYUN_ACCESS_KEY_ID / SECRET）。',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
               color: scheme.onSurfaceVariant,
             ),

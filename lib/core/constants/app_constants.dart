@@ -24,6 +24,25 @@ class AppConstants {
   static const Duration connectTimeout = Duration(seconds: 15);
   static const Duration receiveTimeout = Duration(seconds: 15);
 
+  /// 阿里云 OCR（RecognizeAdvanced）默认接入点
+  static const String defaultAliyunOcrEndpoint =
+      'ocr-api.cn-hangzhou.aliyuncs.com';
+
+  static const String dartDefineAliyunAccessKeyId = String.fromEnvironment(
+    'ALIYUN_ACCESS_KEY_ID',
+    defaultValue: '',
+  );
+
+  static const String dartDefineAliyunAccessKeySecret = String.fromEnvironment(
+    'ALIYUN_ACCESS_KEY_SECRET',
+    defaultValue: '',
+  );
+
+  static const String dartDefineAliyunOcrEndpoint = String.fromEnvironment(
+    'ALIYUN_OCR_ENDPOINT',
+    defaultValue: defaultAliyunOcrEndpoint,
+  );
+
   /// 常用预设（OpenAI 兼容接口）
   static const List<({String label, String baseUrl, String model})> presets = [
     (

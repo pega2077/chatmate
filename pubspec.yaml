@@ -27,6 +27,9 @@ dependencies:
   # 网络
   dio: ^5.8.0+1
 
+  # 签名（阿里云 OCR ACS3）
+  crypto: ^3.0.6
+
   # 图片选择
   image_picker: ^1.1.2
 

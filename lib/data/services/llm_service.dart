@@ -36,21 +36,57 @@ class LlmService {
       return _mockReplies(contextText);
     }
 
+    final decoded = await _chatJson(
+      system: PromptTemplates.buildSystemPrompt(personaInstruction),
+      user: PromptTemplates.buildUserPrompt(contextText),
+      temperature: 0.8,
+    );
+    return ReplyResult.fromJson(decoded);
+  }
+
+  /// 用 LLM 过滤、合并 OCR 噪音，整理为对话消息列表
+  Future<List<ChatMessageSlice>> organizeOcrMessages({
+    required List<ChatMessageSlice> rawSlices,
+  }) async {
+    final rawText = formatSlices(rawSlices);
+    if (rawText.trim().isEmpty) return const [];
+
+    if (!_config.hasApiKey) {
+      return _mockOrganize(rawSlices);
+    }
+
+    final decoded = await _chatJson(
+      system: PromptTemplates.buildOcrOrganizeSystemPrompt(),
+      user: PromptTemplates.buildOcrOrganizeUserPrompt(rawText),
+      temperature: 0.2,
+    );
+
+    final messages = decoded['messages'] as List<dynamic>? ?? [];
+    final organized = <ChatMessageSlice>[];
+    for (var i = 0; i < messages.length; i++) {
+      final item = messages[i];
+      if (item is! Map<String, dynamic>) continue;
+      final slice = ChatMessageSlice.fromJson(item);
+      if (slice.text.isEmpty) continue;
+      organized.add(slice.copyWith(timestampY: i.toDouble()));
+    }
+    return organized.isNotEmpty ? organized : _mockOrganize(rawSlices);
+  }
+
+  Future<Map<String, dynamic>> _chatJson({
+    required String system,
+    required String user,
+    double temperature = 0.7,
+  }) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/chat/completions',
       data: {
         'model': _config.model,
-        'temperature': 0.8,
+        'temperature': temperature,
         'response_format': {'type': 'json_object'},
         'messages': [
-          {
-            'role': 'system',
-            'content': PromptTemplates.buildSystemPrompt(personaInstruction),
-          },
-          {
-            'role': 'user',
-            'content': PromptTemplates.buildUserPrompt(contextText),
-          },
+          {'role': 'system', 'content': system},
+          {'role': 'user', 'content': user},
         ],
       },
     );
@@ -68,8 +104,7 @@ class LlmService {
     }
 
     final cleaned = _stripMarkdownFence(content);
-    final decoded = jsonDecode(cleaned) as Map<String, dynamic>;
-    return ReplyResult.fromJson(decoded);
+    return jsonDecode(cleaned) as Map<String, dynamic>;
   }
 
   /// 将 OCR 切片拼成可读上下文
@@ -84,6 +119,30 @@ class LlmService {
           return '[$who] ${s.text}';
         })
         .join('\n');
+  }
+
+  /// 无 API Key 时简单合并相邻同发送者碎片
+  List<ChatMessageSlice> _mockOrganize(List<ChatMessageSlice> raw) {
+    if (raw.isEmpty) return const [];
+    final merged = <ChatMessageSlice>[];
+    for (final slice in raw) {
+      final text = slice.text.trim();
+      if (text.isEmpty) continue;
+      if (merged.isNotEmpty &&
+          merged.last.sender == slice.sender &&
+          slice.sender != MessageSender.unknown) {
+        final prev = merged.removeLast();
+        merged.add(
+          prev.copyWith(
+            text: '${prev.text} $text',
+            timestampY: prev.timestampY,
+          ),
+        );
+      } else {
+        merged.add(slice.copyWith(text: text));
+      }
+    }
+    return merged;
   }
 
   String _stripMarkdownFence(String raw) {

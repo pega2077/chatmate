@@ -17,61 +17,57 @@ class ChatAssistantScreen extends ConsumerStatefulWidget {
 }
 
 class _ChatAssistantScreenState extends ConsumerState<ChatAssistantScreen> {
-  late final TextEditingController _inputController;
-
-  @override
-  void initState() {
-    super.initState();
-    _inputController = TextEditingController();
-  }
-
-  @override
-  void dispose() {
-    _inputController.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final chat = ref.watch(chatNotifierProvider);
     final personas = ref.watch(personaNotifierProvider).value ?? [];
     final selectedId = ref.watch(selectedPersonaIdProvider);
-    String? selectedName;
-    for (final p in personas) {
-      if (p.id == selectedId) {
-        selectedName = p.name;
-        break;
-      }
-    }
-
-    // 同步 controller，避免与 Riverpod state 脱节
-    if (_inputController.text != chat.inputText) {
-      _inputController.value = TextEditingValue(
-        text: chat.inputText,
-        selection: TextSelection.collapsed(offset: chat.inputText.length),
-      );
-    }
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(selectedName == null ? '回复助手' : '回复助手 · $selectedName'),
+        title: const Text('回复助手'),
+        actions: [
+          if (personas.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<int>(
+                  value: personas.any((p) => p.id == selectedId)
+                      ? selectedId
+                      : personas.first.id,
+                  hint: const Text('选择人设'),
+                  items: personas
+                      .map(
+                        (p) => DropdownMenuItem(
+                          value: p.id,
+                          child: Text(p.name),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: chat.isLoading
+                      ? null
+                      : (id) =>
+                            ref.read(selectedPersonaIdProvider.notifier).select(id),
+                ),
+              ),
+            ),
+        ],
       ),
       body: Stack(
         children: [
           ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
             children: [
-              TextField(
-                controller: _inputController,
-                minLines: 4,
-                maxLines: 10,
-                decoration: const InputDecoration(
-                  labelText: '聊天上下文',
-                  hintText: '粘贴对话，或点击下方导入截图识别',
-                  alignLabelWithHint: true,
+              Text(
+                '聊天上下文',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '导入截图后会自动 OCR，并用 AI 过滤整理成对话。可点气泡修改内容或切换身份。',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
-                onChanged: (v) =>
-                    ref.read(chatNotifierProvider.notifier).setInputText(v),
               ),
               const SizedBox(height: 12),
               Wrap(
@@ -96,6 +92,15 @@ class _ChatAssistantScreenState extends ConsumerState<ChatAssistantScreen> {
                     icon: const Icon(Icons.content_paste),
                     label: const Text('读取剪贴板'),
                   ),
+                  OutlinedButton.icon(
+                    onPressed: chat.isLoading
+                        ? null
+                        : () => ref
+                              .read(chatNotifierProvider.notifier)
+                              .addMessage(),
+                    icon: const Icon(Icons.add_comment_outlined),
+                    label: const Text('添加消息'),
+                  ),
                   FilledButton.icon(
                     onPressed: chat.isLoading
                         ? null
@@ -107,15 +112,36 @@ class _ChatAssistantScreenState extends ConsumerState<ChatAssistantScreen> {
                   ),
                 ],
               ),
-              if (chat.ocrSlices.isNotEmpty) ...[
-                const SizedBox(height: 20),
-                Text(
-                  'OCR 识别预览',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                ...chat.ocrSlices.map((s) => _OcrSliceTile(slice: s)),
-              ],
+              const SizedBox(height: 16),
+              if (chat.messages.isEmpty)
+                _EmptyConversationHint(
+                  onPaste: chat.isLoading
+                      ? null
+                      : () => ref
+                            .read(chatNotifierProvider.notifier)
+                            .loadClipboard(),
+                )
+              else
+                ...List.generate(chat.messages.length, (index) {
+                  return _ConversationBubble(
+                    index: index,
+                    slice: chat.messages[index],
+                    enabled: !chat.isLoading,
+                    onEdit: () => _editMessage(context, index, chat.messages[index]),
+                    onToggleSender: () {
+                      final current = chat.messages[index].sender;
+                      final next = current == MessageSender.me
+                          ? MessageSender.peer
+                          : MessageSender.me;
+                      ref
+                          .read(chatNotifierProvider.notifier)
+                          .updateMessageSender(index, next);
+                    },
+                    onDelete: () => ref
+                        .read(chatNotifierProvider.notifier)
+                        .removeMessage(index),
+                  );
+                }),
               if (chat.error != null) ...[
                 const SizedBox(height: 16),
                 Text(
@@ -153,49 +179,245 @@ class _ChatAssistantScreenState extends ConsumerState<ChatAssistantScreen> {
             ],
           ),
           if (chat.isLoading)
-            const ColoredBox(
-              color: Color(0x66FFFFFF),
-              child: LoadingIndicator(message: '正在处理…'),
+            ColoredBox(
+              color: const Color(0x66FFFFFF),
+              child: LoadingIndicator(
+                message: chat.loadingMessage ?? '正在处理…',
+              ),
             ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _editMessage(
+    BuildContext context,
+    int index,
+    ChatMessageSlice slice,
+  ) async {
+    final controller = TextEditingController(text: slice.text);
+    MessageSender sender = slice.sender == MessageSender.unknown
+        ? MessageSender.peer
+        : slice.sender;
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 8,
+                bottom: MediaQuery.viewInsetsOf(ctx).bottom + 20,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('编辑消息', style: Theme.of(ctx).textTheme.titleLarge),
+                  const SizedBox(height: 16),
+                  SegmentedButton<MessageSender>(
+                    segments: const [
+                      ButtonSegment(
+                        value: MessageSender.peer,
+                        label: Text('对方'),
+                        icon: Icon(Icons.person_outline),
+                      ),
+                      ButtonSegment(
+                        value: MessageSender.me,
+                        label: Text('我'),
+                        icon: Icon(Icons.face_outlined),
+                      ),
+                    ],
+                    selected: {sender},
+                    onSelectionChanged: (set) {
+                      setModalState(() => sender = set.first);
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    minLines: 3,
+                    maxLines: 8,
+                    decoration: const InputDecoration(
+                      labelText: '消息内容',
+                      alignLabelWithHint: true,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    child: const Text('保存'),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (saved == true && mounted) {
+      final notifier = ref.read(chatNotifierProvider.notifier);
+      notifier.updateMessageText(index, controller.text.trim());
+      notifier.updateMessageSender(index, sender);
+    }
+    controller.dispose();
+  }
+}
+
+class _EmptyConversationHint extends StatelessWidget {
+  const _EmptyConversationHint({this.onPaste});
+
+  final VoidCallback? onPaste;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.forum_outlined, size: 36, color: scheme.onSurfaceVariant),
+          const SizedBox(height: 12),
+          Text(
+            '还没有对话',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '导入聊天截图，或从剪贴板粘贴一段上下文',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          if (onPaste != null) ...[
+            const SizedBox(height: 16),
+            TextButton.icon(
+              onPressed: onPaste,
+              icon: const Icon(Icons.content_paste),
+              label: const Text('读取剪贴板'),
+            ),
+          ],
         ],
       ),
     );
   }
 }
 
-class _OcrSliceTile extends StatelessWidget {
-  const _OcrSliceTile({required this.slice});
+class _ConversationBubble extends StatelessWidget {
+  const _ConversationBubble({
+    required this.index,
+    required this.slice,
+    required this.enabled,
+    required this.onEdit,
+    required this.onToggleSender,
+    required this.onDelete,
+  });
 
+  final int index;
   final ChatMessageSlice slice;
+  final bool enabled;
+  final VoidCallback onEdit;
+  final VoidCallback onToggleSender;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final isMe = slice.sender == MessageSender.me;
     final label = switch (slice.sender) {
       MessageSender.peer => '对方',
       MessageSender.me => '我',
       MessageSender.unknown => '未知',
     };
-    final align = slice.sender == MessageSender.me
-        ? Alignment.centerRight
-        : Alignment.centerLeft;
-    final bg = slice.sender == MessageSender.me
-        ? scheme.primaryContainer
-        : scheme.surfaceContainerHighest;
+    final align = isMe ? Alignment.centerRight : Alignment.centerLeft;
+    final bg = isMe ? scheme.primaryContainer : scheme.surfaceContainerHighest;
+    final fg = isMe ? scheme.onPrimaryContainer : scheme.onSurface;
 
     return Align(
       alignment: align,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.sizeOf(context).width * 0.78,
+          maxWidth: MediaQuery.sizeOf(context).width * 0.82,
         ),
-        decoration: BoxDecoration(
+        child: Card(
+          margin: const EdgeInsets.only(bottom: 10),
           color: bg,
-          borderRadius: BorderRadius.circular(10),
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: InkWell(
+            onTap: enabled ? onEdit : null,
+            borderRadius: BorderRadius.circular(14),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      ActionChip(
+                        visualDensity: VisualDensity.compact,
+                        avatar: Icon(
+                          isMe ? Icons.face_outlined : Icons.person_outline,
+                          size: 16,
+                        ),
+                        label: Text(label),
+                        onPressed: enabled ? onToggleSender : null,
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        tooltip: '编辑',
+                        onPressed: enabled ? onEdit : null,
+                        icon: const Icon(Icons.edit_outlined, size: 18),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      IconButton(
+                        tooltip: '删除',
+                        onPressed: enabled ? onDelete : null,
+                        icon: Icon(
+                          Icons.close,
+                          size: 18,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4, bottom: 4),
+                    child: Text(
+                      slice.text.isEmpty ? '（空消息，点此编辑）' : slice.text,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: slice.text.isEmpty
+                            ? scheme.onSurfaceVariant
+                            : fg,
+                        fontStyle: slice.text.isEmpty
+                            ? FontStyle.italic
+                            : FontStyle.normal,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
-        child: Text('[$label] ${slice.text}'),
       ),
     );
   }

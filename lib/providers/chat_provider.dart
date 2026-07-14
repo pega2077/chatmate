@@ -6,8 +6,8 @@ import '../data/models/chat_context.dart';
 import '../data/models/persona.dart';
 import '../data/models/reply_option.dart';
 import '../data/services/llm_service.dart';
-import '../data/services/ocr_service.dart';
 import 'api_config_provider.dart';
+import 'ocr_config_provider.dart';
 import 'persona_provider.dart';
 
 final chatNotifierProvider =
@@ -15,79 +15,147 @@ final chatNotifierProvider =
 
 class ChatAssistantState {
   final String inputText;
-  final List<ChatMessageSlice> ocrSlices;
+  final List<ChatMessageSlice> messages;
   final List<ReplyOption> options;
   final bool isLoading;
+  final String? loadingMessage;
   final String? error;
 
   const ChatAssistantState({
     this.inputText = '',
-    this.ocrSlices = const [],
+    this.messages = const [],
     this.options = const [],
     this.isLoading = false,
+    this.loadingMessage,
     this.error,
   });
 
   ChatAssistantState copyWith({
     String? inputText,
-    List<ChatMessageSlice>? ocrSlices,
+    List<ChatMessageSlice>? messages,
     List<ReplyOption>? options,
     bool? isLoading,
+    String? loadingMessage,
     String? error,
     bool clearError = false,
+    bool clearLoadingMessage = false,
   }) {
     return ChatAssistantState(
       inputText: inputText ?? this.inputText,
-      ocrSlices: ocrSlices ?? this.ocrSlices,
+      messages: messages ?? this.messages,
       options: options ?? this.options,
       isLoading: isLoading ?? this.isLoading,
+      loadingMessage: clearLoadingMessage
+          ? null
+          : (loadingMessage ?? this.loadingMessage),
       error: clearError ? null : (error ?? this.error),
     );
   }
 }
 
 class ChatNotifier extends Notifier<ChatAssistantState> {
-  final OcrService _ocr = OcrService();
-
   @override
-  ChatAssistantState build() {
-    ref.onDispose(() {
-      _ocr.dispose();
-    });
-    return const ChatAssistantState();
-  }
+  ChatAssistantState build() => const ChatAssistantState();
 
   Future<void> loadClipboard() async {
     final text = await ClipboardHelper.getLatestText();
-    if (text != null) {
-      state = state.copyWith(inputText: text, clearError: true);
-    }
+    if (text == null || text.trim().isEmpty) return;
+    state = state.copyWith(
+      inputText: text,
+      messages: [
+        ChatMessageSlice(text: text.trim(), sender: MessageSender.peer),
+      ],
+      clearError: true,
+    );
   }
 
   void setInputText(String text) {
     state = state.copyWith(inputText: text, clearError: true);
   }
 
+  void updateMessageText(int index, String text) {
+    if (index < 0 || index >= state.messages.length) return;
+    final next = [...state.messages];
+    next[index] = next[index].copyWith(text: text);
+    state = state.copyWith(
+      messages: next,
+      inputText: LlmService.formatSlices(next),
+      clearError: true,
+    );
+  }
+
+  void updateMessageSender(int index, MessageSender sender) {
+    if (index < 0 || index >= state.messages.length) return;
+    final next = [...state.messages];
+    next[index] = next[index].copyWith(sender: sender);
+    state = state.copyWith(
+      messages: next,
+      inputText: LlmService.formatSlices(next),
+      clearError: true,
+    );
+  }
+
+  void removeMessage(int index) {
+    if (index < 0 || index >= state.messages.length) return;
+    final next = [...state.messages]..removeAt(index);
+    state = state.copyWith(
+      messages: next,
+      inputText: LlmService.formatSlices(next),
+      clearError: true,
+    );
+  }
+
+  void addMessage({
+    MessageSender sender = MessageSender.peer,
+    String text = '',
+  }) {
+    final next = [...state.messages, ChatMessageSlice(text: text, sender: sender)];
+    state = state.copyWith(
+      messages: next,
+      inputText: LlmService.formatSlices(next),
+      clearError: true,
+    );
+  }
+
   Future<void> importScreenshot() async {
     final bytes = await ImagePickerHelper.pickImageBytes();
     if (bytes == null) return;
 
-    state = state.copyWith(isLoading: true, clearError: true);
+    state = state.copyWith(
+      isLoading: true,
+      loadingMessage: '正在识别截图…',
+      clearError: true,
+    );
     try {
-      final slices = await _ocr.processChatScreenshot(bytes);
-      final formatted = LlmService.formatSlices(slices);
+      final rawSlices = await ref
+          .read(ocrServiceProvider)
+          .processChatScreenshot(bytes);
+
+      state = state.copyWith(loadingMessage: '正在整理对话…');
+      final organized = await ref
+          .read(llmServiceProvider)
+          .organizeOcrMessages(rawSlices: rawSlices);
+
+      final formatted = LlmService.formatSlices(organized);
       state = state.copyWith(
-        ocrSlices: slices,
+        messages: organized,
         inputText: formatted.isNotEmpty ? formatted : state.inputText,
         isLoading: false,
+        clearLoadingMessage: true,
       );
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: 'OCR 识别失败：$e');
+      state = state.copyWith(
+        isLoading: false,
+        clearLoadingMessage: true,
+        error: '识别/整理失败：$e',
+      );
     }
   }
 
   Future<void> generateReplies() async {
-    final context = state.inputText.trim();
+    final context = state.messages.isNotEmpty
+        ? LlmService.formatSlices(state.messages)
+        : state.inputText.trim();
     if (context.isEmpty) {
       state = state.copyWith(error: '请先输入或导入聊天上下文');
       return;
@@ -114,15 +182,29 @@ class ChatNotifier extends Notifier<ChatAssistantState> {
       );
     }
 
-    state = state.copyWith(isLoading: true, clearError: true, options: []);
+    state = state.copyWith(
+      isLoading: true,
+      loadingMessage: '正在生成回复…',
+      clearError: true,
+      options: [],
+      inputText: context,
+    );
     try {
       final result = await ref.read(llmServiceProvider).generateReplies(
         personaInstruction: persona.systemPrompt,
         contextText: context,
       );
-      state = state.copyWith(isLoading: false, options: result.options);
+      state = state.copyWith(
+        isLoading: false,
+        clearLoadingMessage: true,
+        options: result.options,
+      );
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: '生成失败：$e');
+      state = state.copyWith(
+        isLoading: false,
+        clearLoadingMessage: true,
+        error: '生成失败：$e',
+      );
     }
   }
 }
