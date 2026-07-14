@@ -1,4 +1,4 @@
----
+
 
 # Flutter MVP 开发方案：智能聊天回复助手
 
@@ -12,7 +12,6 @@ Agent 在生成代码时，必须严格基于以下技术栈及版本约束：
 * **OCR 引擎**: `google_mlkit_text_recognition`（端侧低延迟文本识别）
 * **网络请求**: `dio`（支持拦截器，用于对接大模型 API）
 
----
 
 ## 2. 核心数据模型声明 (Data Schemas)
 
@@ -58,7 +57,7 @@ class ChatMessageSlice {
 
 ```
 
----
+
 
 ## 3. 标准目录结构 (Directory Topology)
 
@@ -83,7 +82,7 @@ lib/
 
 ```
 
----
+
 
 ## 4. 核心管道与核心代码实现规约
 
@@ -198,7 +197,7 @@ $personaInstruction
 
 ```
 
----
+
 
 ## 5. UI 交互层实现指令 (UI Directives)
 
@@ -216,7 +215,7 @@ Agent 需要在 `lib/ui/` 下实现两个核心页面：
 
 
 
----
+
 
 ## 6. Agent 检查清单 (Agent Definition of Done)
 
