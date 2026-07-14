@@ -7,6 +7,7 @@ import '../data/models/persona.dart';
 import '../data/models/reply_option.dart';
 import '../data/services/llm_service.dart';
 import '../data/services/ocr_service.dart';
+import 'api_config_provider.dart';
 import 'persona_provider.dart';
 
 final chatNotifierProvider =
@@ -46,7 +47,6 @@ class ChatAssistantState {
 }
 
 class ChatNotifier extends Notifier<ChatAssistantState> {
-  final LlmService _llm = LlmService();
   final OcrService _ocr = OcrService();
 
   @override
@@ -116,7 +116,7 @@ class ChatNotifier extends Notifier<ChatAssistantState> {
 
     state = state.copyWith(isLoading: true, clearError: true, options: []);
     try {
-      final result = await _llm.generateReplies(
+      final result = await ref.read(llmServiceProvider).generateReplies(
         personaInstruction: persona.systemPrompt,
         contextText: context,
       );

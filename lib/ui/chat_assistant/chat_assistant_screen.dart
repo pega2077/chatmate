@@ -16,31 +16,17 @@ class ChatAssistantScreen extends ConsumerStatefulWidget {
       _ChatAssistantScreenState();
 }
 
-class _ChatAssistantScreenState extends ConsumerState<ChatAssistantScreen>
-    with WidgetsBindingObserver {
+class _ChatAssistantScreenState extends ConsumerState<ChatAssistantScreen> {
   late final TextEditingController _inputController;
 
   @override
   void initState() {
     super.initState();
     _inputController = TextEditingController();
-    WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(chatNotifierProvider.notifier).loadClipboard();
-    });
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 前台唤醒时自动读取剪贴板，填充分析队列
-    if (state == AppLifecycleState.resumed) {
-      ref.read(chatNotifierProvider.notifier).loadClipboard();
-    }
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _inputController.dispose();
     super.dispose();
   }

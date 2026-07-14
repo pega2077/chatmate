@@ -2,42 +2,44 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 
-import '../../core/constants/app_constants.dart';
 import '../../core/constants/prompt_templates.dart';
+import '../models/api_config.dart';
 import '../models/chat_context.dart';
 import '../models/reply_option.dart';
 
 class LlmService {
-  LlmService({Dio? dio})
-    : _dio =
+  LlmService({required ApiConfig config, Dio? dio})
+    : _config = config,
+      _dio =
           dio ??
           Dio(
             BaseOptions(
-              baseUrl: AppConstants.llmBaseUrl,
-              connectTimeout: AppConstants.connectTimeout,
-              receiveTimeout: AppConstants.receiveTimeout,
+              baseUrl: config.baseUrl,
+              connectTimeout: config.connectTimeout,
+              receiveTimeout: config.receiveTimeout,
               headers: {
                 'Content-Type': 'application/json',
-                if (AppConstants.llmApiKey.isNotEmpty)
-                  'Authorization': 'Bearer ${AppConstants.llmApiKey}',
+                if (config.hasApiKey)
+                  'Authorization': 'Bearer ${config.apiKey}',
               },
             ),
           );
 
+  final ApiConfig _config;
   final Dio _dio;
 
   Future<ReplyResult> generateReplies({
     required String personaInstruction,
     required String contextText,
   }) async {
-    if (AppConstants.llmApiKey.isEmpty) {
+    if (!_config.hasApiKey) {
       return _mockReplies(contextText);
     }
 
     final response = await _dio.post<Map<String, dynamic>>(
       '/chat/completions',
       data: {
-        'model': AppConstants.llmModel,
+        'model': _config.model,
         'temperature': 0.8,
         'response_format': {'type': 'json_object'},
         'messages': [

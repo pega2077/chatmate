@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/persona.dart';
+import 'api_config_store.dart';
 
 /// 基于 [SharedPreferences] 的人设本地缓存
 class PersonaLocalStore {
@@ -23,6 +24,7 @@ class PersonaLocalStore {
 
   static Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
+    await ApiConfigStore.init(_prefs!);
     await _seedDefaultsIfEmpty();
   }
 

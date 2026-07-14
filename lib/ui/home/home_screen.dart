@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/persona.dart';
+import '../../providers/api_config_provider.dart';
 import '../../providers/persona_provider.dart';
 import '../chat_assistant/chat_assistant_screen.dart';
+import '../settings/api_settings_screen.dart';
 import '../widgets/loading_indicator.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -12,9 +14,30 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final personasAsync = ref.watch(personaNotifierProvider);
+    final apiConfig = ref.watch(apiConfigProvider);
+    final hasKey = apiConfig.hasApiKey;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('ChatMate · 人设管理')),
+      appBar: AppBar(
+        title: const Text('ChatMate · 人设管理'),
+        actions: [
+          IconButton(
+            tooltip: hasKey ? 'API 设置' : '配置 API（当前为演示模式）',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const ApiSettingsScreen(),
+                ),
+              );
+            },
+            icon: Badge(
+              isLabelVisible: !hasKey,
+              smallSize: 8,
+              child: const Icon(Icons.settings_outlined),
+            ),
+          ),
+        ],
+      ),
       body: personasAsync.when(
         loading: () => const LoadingIndicator(message: '加载人设…'),
         error: (e, _) => Center(child: Text('加载失败：$e')),

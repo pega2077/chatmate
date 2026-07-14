@@ -1,25 +1,50 @@
-/// API 与应用配置
-///
-/// 将 [llmApiKey] 替换为你的真实密钥；也可通过 `--dart-define=LLM_API_KEY=xxx` 注入。
+/// 默认常量；实际运行时以 SharedPreferences 中的 [ApiConfig] 为准。
 class AppConstants {
   AppConstants._();
 
-  /// OpenAI 兼容接口 Base URL（可换成 DeepSeek / 通义等）
-  static const String llmBaseUrl = String.fromEnvironment(
+  static const String defaultLlmBaseUrl = 'https://api.openai.com/v1';
+  static const String defaultLlmModel = 'gpt-4o-mini';
+
+  /// 编译期注入可作为首次默认值
+  static const String dartDefineBaseUrl = String.fromEnvironment(
     'LLM_BASE_URL',
-    defaultValue: 'https://api.openai.com/v1',
+    defaultValue: defaultLlmBaseUrl,
   );
 
-  static const String llmApiKey = String.fromEnvironment(
+  static const String dartDefineApiKey = String.fromEnvironment(
     'LLM_API_KEY',
     defaultValue: '',
   );
 
-  static const String llmModel = String.fromEnvironment(
+  static const String dartDefineModel = String.fromEnvironment(
     'LLM_MODEL',
-    defaultValue: 'gpt-4o-mini',
+    defaultValue: defaultLlmModel,
   );
 
   static const Duration connectTimeout = Duration(seconds: 15);
   static const Duration receiveTimeout = Duration(seconds: 15);
+
+  /// 常用预设（OpenAI 兼容接口）
+  static const List<({String label, String baseUrl, String model})> presets = [
+    (
+      label: 'OpenAI',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+    ),
+    (
+      label: 'DeepSeek',
+      baseUrl: 'https://api.deepseek.com/v1',
+      model: 'deepseek-chat',
+    ),
+    (
+      label: '通义千问',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen-plus',
+    ),
+    (
+      label: 'Moonshot',
+      baseUrl: 'https://api.moonshot.cn/v1',
+      model: 'moonshot-v1-8k',
+    ),
+  ];
 }
