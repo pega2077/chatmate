@@ -8,34 +8,36 @@ Agent 在生成代码时，必须严格基于以下技术栈及版本约束：
 
 * **Flutter SDK**: `^3.22.0` (或当前 2026 年稳定版)
 * **状态管理**: `flutter_riverpod` + `riverpod_annotation`（强类型、编译期安全）
-* **本地数据库**: `isar`（高性能、支持异步/多线程，用于存储自定义人设与历史记录）
-* **OCR 引擎**: `google_mlkit_text_recognition`（端侧低延迟文本识别）
+* **本地缓存**: `shared_preferences`（Flutter 官方本地键值缓存，持久化人设）
+* **OCR 引擎**: [`flutter_ocr_native`](https://github.com/pega2077/flutter_ocr_native)（Web：Tesseract.js）
 * **网络请求**: `dio`（支持拦截器，用于对接大模型 API）
+* **目标平台**: Web
 
 
 ## 2. 核心数据模型声明 (Data Schemas)
 
-Agent 须在 `lib/data/models/` 目录下生成以下符合 Isar 规范的 Dart 模型：
+Agent 须在 `lib/data/models/` 目录下生成以下 Dart 模型：
 
 ### 2.1 人设模型 (`persona.dart`)
 
 ```dart
-import 'package:isar/isar.dart';
-
-part 'persona.g.dart';
-
-@collection
 class Persona {
-  Id id = Isar.autoIncrement;
-  
-  @Index(unique: true)
-  late String name;         // 人设名称，如“职场太极大师”
-  late String description;  // 用户可见的人设描述
-  late String systemPrompt; // 核心 Prompt 约束
-  late List<String> tags;   // 标签，如 ['Work', 'Humor']
-  late DateTime createdAt;
-}
+  final int id;
+  final String name;         // 人设名称，如“职场太极大师”
+  final String description;  // 用户可见的人设描述
+  final String systemPrompt; // 核心 Prompt 约束
+  final List<String> tags;   // 标签，如 ['Work', 'Humor']
+  final DateTime createdAt;
 
+  const Persona({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.systemPrompt,
+    required this.tags,
+    required this.createdAt,
+  });
+}
 ```
 
 ### 2.2 上下文消息切片模型 (`chat_context.dart`)
@@ -71,7 +73,7 @@ lib/
 │   ├── theme/           # 极简 UI 主题
 │   └── utils/           # 剪贴板监听器、图片选择器封装
 ├── data/
-│   ├── database/        # Isar 初始化及持久化
+│   ├── database/        # SharedPreferences 本地缓存
 │   ├── models/          # 实体模型 (Persona)
 │   └── services/        # LLM API 服务、Google ML Kit OCR 服务
 ├── providers/           # Riverpod 状态提供者 (PersonaNotifier, ChatNotifier)
@@ -116,30 +118,31 @@ class ClipboardHelper {
 
 ```dart
 // lib/data/services/ocr_service.dart
-import 'dart:io';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'dart:typed_data';
+import 'package:flutter_ocr_native/flutter_ocr_native.dart';
 import '../models/chat_context.dart';
 
 class OcrService {
-  final _textRecognizer = TextRecognizer(script: TextRecognitionScript.chinese);
+  final OcrReader _reader = OcrReader();
 
-  Future<List<ChatMessageSlice>> processChatScreenshot(String imagePath) async {
-    final inputImage = InputImage.fromFilePath(imagePath);
-    final RecognizedText recognizedText = await _textRecognizer.processImage(inputImage);
-    
+  Future<List<ChatMessageSlice>> processChatScreenshot(Uint8List imageBytes) async {
+    await _reader.setLanguage(OcrLanguage.chineseSimplified);
+    // Web 需使用 readFromBytes
+    final OcrResult result = await _reader.readFromBytes(imageBytes);
+
     List<ChatMessageSlice> slices = [];
-    
+
     // 假设标准屏幕宽度（用于计算左右边界比例）
     // 实际生产中可结合图片元数据图片的 width 进行比例划分
     // 通常：X 轴起始点在左侧 0%~60% 区间且长度不超过一定比例的为对方；靠右侧的为自己。
-    for (TextBlock block in recognizedText.blocks) {
+    for (TextBlock block in result.blocks) {
       for (TextLine line in block.lines) {
         final double x = line.boundingBox.left;
         final double y = line.boundingBox.top;
-        
+
         MessageSender sender = MessageSender.unknown;
         // 简易动态阈值算法：根据 X 轴坐标判定角色
-        if (x < 300) { 
+        if (x < 300) {
           sender = MessageSender.peer;
         } else {
           sender = MessageSender.me;
@@ -158,11 +161,8 @@ class OcrService {
     return slices;
   }
 
-  void dispose() {
-    _textRecognizer.close();
-  }
+  Future<void> dispose() => _reader.dispose();
 }
-
 ```
 
 ### 管道 C：大模型提示词融合器 (Prompt Engineering)
@@ -204,7 +204,7 @@ $personaInstruction
 Agent 需要在 `lib/ui/` 下实现两个核心页面：
 
 1. **HomeScreen (人设管理中心)**:
-* 主列表采用 `ListView.builder` 渲染 Isar 数据库中读取的 `Persona` 列表。
+* 主列表采用 `ListView.builder` 渲染本地缓存中读取的 `Persona` 列表。
 * 提供全局浮动操作按钮（FAB）用于快速添加自定义 System Prompt。
 
 
@@ -222,5 +222,5 @@ Agent 需要在 `lib/ui/` 下实现两个核心页面：
 在完成代码生成后，Agent 需自我运行以下断言：
 
 1. [ ] 所有对文本处理的代码均无 bare `<` 或 `>` 符号，防止编译期布局解析错误。
-2. [ ] 在 `OcrService` 结束时已正确解构并闭合 `TextRecognizer` 实例，无内存泄漏隐患。
+2. [ ] 在 `OcrService` 结束时已正确调用 `OcrReader.dispose()`，无内存泄漏隐患。
 3. [ ] 网络层 Dio 请求已配置 `connectTimeout` 与 `receiveTimeout`（推荐 15 秒限制）。

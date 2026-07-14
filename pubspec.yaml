@@ -1,0 +1,39 @@
+name: chatmate
+description: 智能聊天回复助手 — 基于人设与 OCR 上下文的 AI 回复生成 MVP
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # 状态管理
+  flutter_riverpod: ^3.0.0
+
+  # 本地缓存（Flutter 官方 shared_preferences）
+  shared_preferences: ^2.5.3
+
+  # OCR（Web 使用 Tesseract.js）
+  flutter_ocr_native:
+    git:
+      url: https://github.com/pega2077/flutter_ocr_native.git
+      ref: main
+
+  # 网络
+  dio: ^5.8.0+1
+
+  # 图片选择
+  image_picker: ^1.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
